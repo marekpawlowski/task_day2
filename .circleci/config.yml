@@ -1,0 +1,70 @@
+version: 2.1
+
+commands:
+  deploy_package:
+    parameters:
+      environment:
+        type: enum
+        default: "staging"
+        enum: ["staging", "integration", "production"]
+      dynamic:
+        type: boolean
+        default: false
+    steps:
+      - attach_workspace:
+          at: ~/repo
+      - restore_cache:
+          key: deployment-gems-{{ checksum "Gemfile.lock" }}
+      - run: gem install bundler
+      - run: bundle install --deployment --path ~/repo/deployment/vendor/bundle
+      - save_cache:
+          key: deployment-gems-{{ checksum "Gemfile.lock" }}
+          paths:
+            - ~/repo/deployment/vendor/bundle
+      - run: bundle config --local path ~/repo/deployment/vendor/bundle
+      - run: | 
+            pwd 
+            ls -l
+      - run:
+          name: Deploy to << parameters.environment >>
+          command: <<# parameters.dynamic >>REVISION=${CIRCLE_SHA1} PR=${CIRCLE_PULL_REQUEST##*/} <</ parameters.dynamic >>bundle exec cap << parameters.environment >> deploy
+############################################################
+## Executors definitions
+executors:
+  ruby:
+    working_directory: ~/repo
+    docker:
+      - image: circleci/ruby:2.6.0
+
+############################################################
+## Jobs
+jobs:
+  checkout_code:
+    executor: ruby
+    steps:
+      - checkout
+      - persist_to_workspace:
+          root: ~/repo
+          paths:
+            - .
+
+  deploy_staging:
+    executor: ruby
+    working_directory: ~/repo/deployment
+    steps:
+      - deploy_package
+
+############################################################
+## Workflows
+workflows:
+  version: 2
+  test-and-release:
+    jobs:
+      - checkout_code
+      - deploy_staging:
+          requires:
+            - checkout_code
+          filters:
+            branches:
+              only:
+                - master
